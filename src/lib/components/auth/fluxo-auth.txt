@@ -1,0 +1,34 @@
+
+
+LOGIN   -> link -> /auth/forgot-password
+        -> link -> /home
+        -> if mustChangePassword -> /auth/change-password
+        -> if !emailVerified -> /auth/verify-email?email=[email]
+        -> if logado -> /home
+
+
+** SIGNUP  -> link -> /auth/login
+        -> link -> /home
+        -> if - create -> /auth/verify-email?email=[email]
+
+** FORGOT  -> link -> /auth/login
+        -> if - código enviado -> /auth/reset-password?email=[email]
+
+
+** RESET   -> link -> /auth/login
+        -> if - OK -> /auth/login
+
+** VERIFY  -> link -> /auth/login
+        -> if - OK -> /auth/login
+
+
+** CHANGE  -> if - OK -> /home
+        -> if not logado -> /auth/login
+
+
+Como todos os caminhos levam a Home, então Home redireciona
+para returnTo, se este parametro estiver presento na url
+
+
+        
+

@@ -1,0 +1,12 @@
+Caption,Link,Role que tem permissão
+Meus Estágios,/company/view,company
+Estágio,/estagio,"teacher, admin, sudo"
+Estagiários,/internships,"teacher, admin, sudo"
+Menu,/admin/menu,sudo
+Formulários,/admin/form-models,sudo
+Cursos,/admin/courses,"admin, sudo"
+Professores,/admin/teachers,"admin, sudo"
+Usuários,/admin/users,sudo
+Banco de Dados,/sudo/db,sudo
+Meu Perfil,/private/profile,Todas as roles
+Sair,handleLogout,Todas as roles
