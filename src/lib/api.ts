@@ -6,6 +6,8 @@ import { browser } from '$app/environment';
 let isRefreshing = false;
 let refreshSubscribers: Array<(token: string) => void> = [];
 
+const DEFAULT_TIMEOUT = 10000; // 10 segundos
+
 /**
  * Adiciona callback para ser executado quando o token for renovado
  */
@@ -22,9 +24,32 @@ function onTokenRefreshed(token: string) {
 }
 
 /**
+ * Fetch com timeout para evitar que promessas fiquem "no limbo"
+ */
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout = DEFAULT_TIMEOUT): Promise<Response> {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+        clearTimeout(id);
+        return response;
+    } catch (error: any) {
+        clearTimeout(id);
+        if (error.name === 'AbortError') {
+            throw new Error(`Timeout: A requisição para ${url} demorou mais de ${timeout}ms`);
+        }
+        throw error;
+    }
+}
+
+/**
  * Renova o access token usando o refresh token
  */
-async function refreshAccessToken(customFetch?: typeof fetch): Promise<string | null> {
+async function refreshAccessToken(): Promise<string | null> {
     if (!browser) return null;
 
     const refreshToken = localStorage.getItem('refresh_token');
@@ -33,16 +58,15 @@ async function refreshAccessToken(customFetch?: typeof fetch): Promise<string | 
         return null;
     }
 
-    const fetcher = customFetch || fetch;
-
     try {
-        const response = await fetcher(`${API_URL}/auth/refresh`, {
+        // Usamos fetchWithTimeout com um tempo menor para a renovação (ex: 8s)
+        const response = await fetchWithTimeout(`${API_URL}/auth/refresh`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ refreshToken })
-        });
+        }, 8000);
 
         if (response.ok) {
             const data = await response.json();
@@ -59,7 +83,6 @@ async function refreshAccessToken(customFetch?: typeof fetch): Promise<string | 
             localStorage.removeItem('access_token');
             localStorage.removeItem('refresh_token');
             user.set(null);
-            goto('/auth/login');
             return null;
         }
     } catch (error) {
@@ -71,9 +94,8 @@ async function refreshAccessToken(customFetch?: typeof fetch): Promise<string | 
 /**
  * Wrapper para fetch que renova automaticamente o token se expirado
  */
-export async function apiFetch(endpoint: string, options: RequestInit = {}, customFetch?: typeof fetch): Promise<Response> {
+export async function apiFetch(endpoint: string, options: RequestInit = {}, timeout = DEFAULT_TIMEOUT): Promise<Response> {
     const accessToken = browser ? localStorage.getItem('access_token') : null;
-    const fetcher = customFetch || fetch;
 
     // Adicionar token de autenticação se existir
     const headers: Record<string, string> = {
@@ -90,62 +112,81 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}, cust
         headers
     };
 
-    // Primeira tentativa
-    let response = await fetcher(`${API_URL}${endpoint}`, config);
+    try {
+        // Primeira tentativa
+        let response = await fetchWithTimeout(`${API_URL}${endpoint}`, config, timeout);
 
-    // Se retornou 401 (token expirado) ou 403 (também usado às vezes pelo backend), tentar renovar
-    const isAuthRoute = endpoint.includes('/auth/login') || endpoint.includes('/auth/refresh');
+        // Se retornou 401 (token expirado) ou 403, tentar renovar
+        const isAuthRoute = endpoint.includes('/auth/login') || endpoint.includes('/auth/refresh');
 
-    if ((response.status === 401 || response.status === 403) && accessToken && browser && !isAuthRoute) {
-        if (!isRefreshing) {
-            isRefreshing = true;
-            // Tenta renovar o token
-            const newToken = await refreshAccessToken(fetcher);
-            isRefreshing = false;
+        if ((response.status === 401 || response.status === 403) && accessToken && browser && !isAuthRoute) {
+            if (!isRefreshing) {
+                isRefreshing = true;
+                try {
+                    // Tenta renovar o token
+                    const newToken = await refreshAccessToken();
+                    isRefreshing = false;
+                    onTokenRefreshed(newToken || '');
 
-            // Importante: Resolve promises pendentes (destrava a fila) mesmo em caso de erro 
-            // passando string vazia se falhar
-            onTokenRefreshed(newToken || '');
+                    if (newToken) {
+                        // Tentar novamente com o novo token
+                        const newHeaders = { ...headers, 'Authorization': `Bearer ${newToken}` };
+                        return await fetchWithTimeout(`${API_URL}${endpoint}`, { ...config, headers: newHeaders }, timeout);
+                    } else {
+                        // Se não renovou, redireciona para login
+                        goto('/auth/login');
+                    }
+                } catch (err) {
+                    isRefreshing = false;
+                    onTokenRefreshed('');
+                    goto('/auth/login');
+                    throw err;
+                }
+            } else {
+                // Aguardar a renovação em andamento com timeout de segurança
+                try {
+                    const newToken = await Promise.race([
+                        new Promise<string>((resolve) => {
+                            subscribeTokenRefresh((token) => resolve(token));
+                        }),
+                        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('Refresh token timeout')), 10000))
+                    ]);
 
-            if (newToken) {
-                // Tentar novamente com o novo token
-                const newHeaders = { ...headers, 'Authorization': `Bearer ${newToken}` };
-                response = await fetcher(`${API_URL}${endpoint}`, { ...config, headers: newHeaders });
-            }
-        } else {
-            // Aguardar a renovação em andamento
-            const newToken = await new Promise<string>((resolve) => {
-                subscribeTokenRefresh((token) => {
-                    resolve(token);
-                });
-            });
-
-            // Só tenta novamente se o token for válido e não vazio
-            if (newToken) {
-                const newHeaders = { ...headers, 'Authorization': `Bearer ${newToken}` };
-                response = await fetcher(`${API_URL}${endpoint}`, { ...config, headers: newHeaders });
+                    if (newToken) {
+                        const newHeaders = { ...headers, 'Authorization': `Bearer ${newToken}` };
+                        return await fetchWithTimeout(`${API_URL}${endpoint}`, { ...config, headers: newHeaders }, timeout);
+                    } else {
+                        goto('/auth/login');
+                    }
+                } catch (raceError) {
+                    goto('/auth/login');
+                    throw raceError;
+                }
             }
         }
-    }
 
-    return response;
+        return response;
+    } catch (error) {
+        // Se der erro de timeout ou rede, podemos lidar aqui
+        console.error(`Status API error at ${endpoint}:`, error);
+        throw error;
+    }
 }
 
 /**
  * Faz logout revogando o refresh token
  */
-export async function logout(customFetch?: typeof fetch) {
+export async function logout() {
     if (!browser) return;
 
     const refreshToken = localStorage.getItem('refresh_token');
-    const fetcher = customFetch || fetch;
 
     if (refreshToken) {
         try {
             await apiFetch('/auth/logout', {
                 method: 'POST',
                 body: JSON.stringify({ refreshToken })
-            }, fetcher);
+            }, 5000); // Logout tem timeout curto
         } catch (error) {
             console.error('Erro ao fazer logout:', error);
         }
@@ -171,7 +212,7 @@ export async function checkAuth(): Promise<boolean> {
     }
 
     try {
-        const response = await apiFetch('/auth/me');
+        const response = await apiFetch('/auth/me', {}, 7000); // Timeout menor para boot
 
         if (response.ok) {
             const userData = await response.json();

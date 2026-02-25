@@ -11,6 +11,12 @@
 
 	onMount(() => {
 		checkAuth();
+		// Remove o loader inicial se ele ainda existir
+		const loader = document.getElementById('initial-loader');
+		if (loader) {
+			loader.style.opacity = '0';
+			setTimeout(() => loader.remove(), 300);
+		}
 	});
 </script>
 
