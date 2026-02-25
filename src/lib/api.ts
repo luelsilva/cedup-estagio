@@ -26,12 +26,12 @@ function onTokenRefreshed(token: string) {
 /**
  * Fetch com timeout para evitar que promessas fiquem "no limbo"
  */
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout = DEFAULT_TIMEOUT): Promise<Response> {
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeout = DEFAULT_TIMEOUT, customFetch = fetch): Promise<Response> {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
 
     try {
-        const response = await fetch(url, {
+        const response = await customFetch(url, {
             ...options,
             signal: controller.signal
         });
@@ -94,7 +94,16 @@ async function refreshAccessToken(): Promise<string | null> {
 /**
  * Wrapper para fetch que renova automaticamente o token se expirado
  */
-export async function apiFetch(endpoint: string, options: RequestInit = {}, timeout = DEFAULT_TIMEOUT): Promise<Response> {
+export async function apiFetch(endpoint: string, options: RequestInit = {}, timeoutOrFetch: number | typeof fetch = DEFAULT_TIMEOUT): Promise<Response> {
+    let timeout = DEFAULT_TIMEOUT;
+    let customFetch = fetch;
+
+    if (typeof timeoutOrFetch === 'number') {
+        timeout = timeoutOrFetch;
+    } else if (typeof timeoutOrFetch === 'function') {
+        customFetch = timeoutOrFetch as typeof fetch;
+    }
+
     const accessToken = browser ? localStorage.getItem('access_token') : null;
 
     // Adicionar token de autenticação se existir
@@ -114,7 +123,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}, time
 
     try {
         // Primeira tentativa
-        let response = await fetchWithTimeout(`${API_URL}${endpoint}`, config, timeout);
+        let response = await fetchWithTimeout(`${API_URL}${endpoint}`, config, timeout, customFetch);
 
         // Se retornou 401 (token expirado) ou 403, tentar renovar
         const isAuthRoute = endpoint.includes('/auth/login') || endpoint.includes('/auth/refresh');
@@ -131,7 +140,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}, time
                     if (newToken) {
                         // Tentar novamente com o novo token
                         const newHeaders = { ...headers, 'Authorization': `Bearer ${newToken}` };
-                        return await fetchWithTimeout(`${API_URL}${endpoint}`, { ...config, headers: newHeaders }, timeout);
+                        return await fetchWithTimeout(`${API_URL}${endpoint}`, { ...config, headers: newHeaders }, timeout, customFetch);
                     } else {
                         // Se não renovou, redireciona para login
                         goto('/auth/login');
@@ -154,7 +163,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}, time
 
                     if (newToken) {
                         const newHeaders = { ...headers, 'Authorization': `Bearer ${newToken}` };
-                        return await fetchWithTimeout(`${API_URL}${endpoint}`, { ...config, headers: newHeaders }, timeout);
+                        return await fetchWithTimeout(`${API_URL}${endpoint}`, { ...config, headers: newHeaders }, timeout, customFetch);
                     } else {
                         goto('/auth/login');
                     }
