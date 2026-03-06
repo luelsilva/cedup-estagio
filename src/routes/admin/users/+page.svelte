@@ -71,7 +71,7 @@
 
 	async function saveUser() {
 		try {
-			const method = editingUser ? 'PUT' : 'POST';
+			const method = editingUser ? 'PATCH' : 'POST';
 			const url = editingUser ? `/users/${editingUser.id}` : '/users';
 
 			const res = await apiFetch(url, {

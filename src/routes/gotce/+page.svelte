@@ -264,7 +264,7 @@
 			let response;
 			if (pageData.mode === 'edit' && pageData.internship) {
 				response = await apiFetch(`/internships/${pageData.internship.id}`, {
-					method: 'PUT',
+					method: 'PATCH',
 					body: JSON.stringify(internshipData)
 				});
 			} else {
