@@ -29,7 +29,7 @@
 	async function loadUsers() {
 		try {
 			loading = true;
-			const res = await apiFetch('/usuarios');
+			const res = await apiFetch('/users');
 			if (res.ok) {
 				users = await res.json();
 			} else {
@@ -72,7 +72,7 @@
 	async function saveUser() {
 		try {
 			const method = editingUser ? 'PUT' : 'POST';
-			const url = editingUser ? `/usuarios/${editingUser.id}` : '/usuarios';
+			const url = editingUser ? `/users/${editingUser.id}` : '/users';
 
 			const res = await apiFetch(url, {
 				method,
@@ -95,7 +95,7 @@
 	async function deleteUser(id) {
 		if (!confirm('Tem certeza que deseja remover este usuário?')) return;
 		try {
-			const res = await apiFetch(`/usuarios/${id}`, { method: 'DELETE' });
+			const res = await apiFetch(`/users/${id}`, { method: 'DELETE' });
 			if (res.ok) {
 				await loadUsers();
 			} else {
